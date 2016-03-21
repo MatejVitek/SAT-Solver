@@ -1,4 +1,6 @@
 from abc import ABC, abstractmethod
+import copy
+import random
 
 
 class Operator:
@@ -12,13 +14,13 @@ class Operator:
 
 T = Operator(["⊤", "T"], lambda: T)
 F = Operator(["⊥", "F"], lambda: F)
-vals = (T, F)
+vals = T, F
 
 NOT = Operator(["¬", "~", "not", "!"], lambda x: T if x is F else F)
 AND = Operator(["∧", "&", "and"], lambda args: T if all(a is T for a in args) else F)
 OR = Operator(["∨", "|", "or"], lambda args: T if any(a is T for a in args) else F)
 IMPL = Operator(["⇒", "->"], lambda x, y: T if x is F or y is T else F)
-ops = (NOT, AND, OR, IMPL)
+ops = NOT, AND, OR, IMPL
 
 
 class Node(ABC):
@@ -38,23 +40,31 @@ class Node(ABC):
     def evaluate(self, varvals):
         pass
 
+    @abstractmethod
+    def negate(self):
+        pass
+
+
 class Leaf(Node):
     def __init__(self, v):
-        self.var = v
+        self.val = v
 
     def __eq__(self, other):
         if not isinstance(other, Leaf):
             return False
-        return self.var == other.var
+        return self.val == other.val
 
     def __str__(self):
-        return self.var
+        return str(self.val)
 
     def bracket_if_necessary(self):
         return str(self)
 
     def evaluate(self, varvals):
-        return varvals[self.var]
+        return self.val if isinstance(self.val, Operator) else varvals[self.val]
+
+    def negate(self):
+        return UnaryNode(NOT, self)
 
 
 class UnaryNode(Node):
@@ -75,6 +85,9 @@ class UnaryNode(Node):
 
     def evaluate(self, varvals):
         return self.op.f(self.child.evaluate(varvals))
+
+    def negate(self):
+        return self.child
 
 
 class BinaryNode(Node):
@@ -97,6 +110,11 @@ class BinaryNode(Node):
     def evaluate(self, varvals):
         return self.op.f(self.lchild.evaluate(varvals), self.rchild.evaluate(varvals))
 
+    def negate(self):
+        if self.op is IMPL:
+            return VariadicNode(AND, [self.lchild, self.rchild.negate()])
+        return None
+
 
 class VariadicNode(Node):
     def __init__(self, op, children):
@@ -106,9 +124,8 @@ class VariadicNode(Node):
     def __eq__(self, other):
         if not isinstance(other, VariadicNode):
             return False
-        return (self.op is other.op and
-                all(child in other.children for child in self.children) and
-                all(child in self.children for child in other.children))
+        return (self.op is other.op and len(self.children) == len(other.children) and
+                all(self.children.count(c) == other.children.count(c) for c in self.children))
 
     def __str__(self):
         return (" " + str(self.op) + " ").join(child.bracket_if_necessary() for child in self.children)
@@ -118,6 +135,9 @@ class VariadicNode(Node):
 
     def evaluate(self, varvals):
         return self.op.f(child.evaluate(varvals) for child in self.children)
+
+    def negate(self):
+        return VariadicNode(AND if self.op is OR else OR, [c.negate() for c in self.children])
 
 
 #
@@ -133,29 +153,78 @@ def main():
             break
         if "." not in input_str:
             input_str += ".txt"
-        cnf = read_cnf(input_str)
-        print(cnf)
-        print("SATISFIABLE" if sat(cnf) else "UNSATISFIABLE")
+        cnf = _read_cnf(input_str)
+        val = sat(cnf)
+        print(" ".join(_to_dimacs(x) for x in val) if val else "UNSATISFIABLE")
 
 
-# Reads the input file in dimacs form and returns the expression tree of the formula in CNF
-def read_cnf(fname):
+# Reads the input file in dimacs format and returns the expression tree of the formula in CNF
+def _read_cnf(fname):
     children = []
     for line in open(fname, 'r'):
         if line[0] in ("c", "p"):
             continue
-        children.append(VariadicNode(OR, [get_literal_node(l) for l in line.split() if int(l)]))
+        children.append(VariadicNode(OR, [_get_literal_node(l) for l in line.split() if int(l)]))
     return VariadicNode(AND, children)
 
 
 # Returns the leaf xn for n in input, and not(xn) for -n in input
-def get_literal_node(l):
+def _get_literal_node(l):
     i = int(l)
-    return Leaf("x" + l) if i > 0 else UnaryNode(NOT, Leaf("x" + str(-i)))
+    return Leaf("x" + l) if i > 0 else Leaf("x" + str(-i)).negate()
 
 
-def sat(cnf):
-    return False
+# DPLL algorithm, as described in lectures
+def sat(cnf, val=()):
+    while True:
+        l = _find_unit_literal(cnf)
+        if not l:
+            break
+        _simplify(cnf, l)
+        val += l,
+    if not cnf.children:
+        return val
+    if VariadicNode(OR, []) in cnf.children:
+        return None
+
+    p = _get_atom(cnf)
+    cnf_copy = copy.deepcopy(cnf)
+
+    cnf.children.append(VariadicNode(OR, [p]))
+    s = sat(cnf, val)
+    if s:
+        return s
+
+    cnf_copy.children.append(VariadicNode(OR, [p.negate()]))
+    return sat(cnf_copy, val)
+
+
+# Finds and returns a unit literal
+def _find_unit_literal(cnf):
+    for c in cnf.children:
+        if len(c.children) == 1:
+            return c.children[0]
+    return None
+
+
+# Simplify procedure as described in lectures
+def _simplify(cnf, l):
+    cnf.children = [_filter(c, l.negate()) for c in cnf.children if l not in c.children]
+
+
+# Removes the chosen unit literal (negated above) from each clause c
+def _filter(c, l):
+    return VariadicNode(c.op, [x for x in c.children if x != l])
+
+
+# Returns an atom from the formula
+def _get_atom(cnf):
+    p = random.choice(random.choice(cnf.children).children)
+    return p if isinstance(p, Leaf) else p.negate()
+
+
+def _to_dimacs(node):
+    return "-" + str(node.child)[1:] if isinstance(node, UnaryNode) else str(node)[1:]
 
 
 if __name__ == '__main__':
