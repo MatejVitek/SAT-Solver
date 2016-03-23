@@ -1,6 +1,8 @@
 from abc import ABC, abstractmethod
 import copy
+import collections
 import random
+import queue
 
 
 class Operator:
@@ -27,6 +29,9 @@ class Node(ABC):
     @abstractmethod
     def __eq__(self, other):
         pass
+
+    def __ne__(self, other):
+        return not self == other
 
     @abstractmethod
     def __str__(self):
@@ -125,19 +130,22 @@ class VariadicNode(Node):
         if not isinstance(other, VariadicNode):
             return False
         return (self.op is other.op and len(self.children) == len(other.children) and
-                all(self.children.count(c) == other.children.count(c) for c in self.children))
+                all(self.children.count(child) == other.children.count(child) for child in self))
 
     def __str__(self):
-        return (" " + str(self.op) + " ").join(child.bracket_if_necessary() for child in self.children)
+        return (" " + str(self.op) + " ").join(child.bracket_if_necessary() for child in self)
+
+    def __iter__(self):
+        return iter(self.children)
 
     def bracket_if_necessary(self):
         return "(" + str(self) + ")"
 
     def evaluate(self, varvals):
-        return self.op.f(child.evaluate(varvals) for child in self.children)
+        return self.op.f(child.evaluate(varvals) for child in self)
 
     def negate(self):
-        return VariadicNode(AND if self.op is OR else OR, [c.negate() for c in self.children])
+        return VariadicNode(AND if self.op is OR else OR, [c.negate() for c in self])
 
 
 #
@@ -162,7 +170,7 @@ def main():
 def _read_cnf(fname):
     children = []
     for line in open(fname, 'r'):
-        if line[0] in ("c", "p"):
+        if line[0] in ('c', 'p'):
             continue
         children.append(VariadicNode(OR, [_get_literal_node(l) for l in line.split() if int(l)]))
     return VariadicNode(AND, children)
@@ -171,37 +179,47 @@ def _read_cnf(fname):
 # Returns the leaf xn for n in input, and not(xn) for -n in input
 def _get_literal_node(l):
     i = int(l)
-    return Leaf("x" + l) if i > 0 else Leaf("x" + str(-i)).negate()
+    return Leaf(l) if i > 0 else Leaf(str(-i)).negate()
 
 
 # DPLL algorithm, as described in lectures
-def sat(cnf, val=()):
-    while True:
-        l = _find_unit_literal(cnf)
-        if not l:
-            break
-        _simplify(cnf, l)
-        val += l,
-    if not cnf.children:
-        return val
-    if VariadicNode(OR, []) in cnf.children:
-        return None
+def sat(formula):
+    states = [(formula, ())]
+    while states:
+        cnf, val = states.pop(_weighted_choice(states))
+        while True:
+            l = _find_unit_literal(cnf)
+            if not l:
+                break
+            _simplify(cnf, l)
+            val += l,
+        if not cnf.children:
+            return val
+        if VariadicNode(OR, []) in cnf:
+            return None
 
-    p = _get_atom(cnf)
-    cnf_copy = copy.deepcopy(cnf)
+        p = _get_atom(cnf)
+        cnf_copy = copy.deepcopy(cnf)
 
-    cnf.children.append(VariadicNode(OR, [p]))
-    s = sat(cnf, val)
-    if s:
-        return s
+        cnf.children.append(VariadicNode(OR, [p]))
+        cnf_copy.children.append(VariadicNode(OR, [p.negate()]))
+        states.append((cnf, val))
+        states.append((cnf_copy, val))
 
-    cnf_copy.children.append(VariadicNode(OR, [p.negate()]))
-    return sat(cnf_copy, val)
+
+# Returns an index chosen randomly, weighted with the inverse of the number of clauses in formulas
+def _weighted_choice(states):
+    weights = [1.0 / len(formula.children) for formula, _ in states]
+    rnd = random.uniform(0, sum(weights))
+    for i in range(len(weights)):
+        rnd -= weights[i]
+        if rnd <= 0:
+            return i
 
 
 # Finds and returns a unit literal
 def _find_unit_literal(cnf):
-    for c in cnf.children:
+    for c in cnf:
         if len(c.children) == 1:
             return c.children[0]
     return None
@@ -209,22 +227,27 @@ def _find_unit_literal(cnf):
 
 # Simplify procedure as described in lectures
 def _simplify(cnf, l):
-    cnf.children = [_filter(c, l.negate()) for c in cnf.children if l not in c.children]
+    cnf.children = [_filter(c, l.negate()) for c in cnf if l not in c]
 
 
-# Removes the chosen unit literal (negated above) from each clause c
+# Removes the chosen unit literal (negated above) from clause c
 def _filter(c, l):
-    return VariadicNode(c.op, [x for x in c.children if x != l])
+    return VariadicNode(c.op, [x for x in c if x != l])
 
 
-# Returns an atom from the formula
+# Returns the most common atom from the formula
 def _get_atom(cnf):
-    p = random.choice(random.choice(cnf.children).children)
-    return p if isinstance(p, Leaf) else p.negate()
+    counter = collections.Counter(_get_var(l) for c in cnf for l in c)
+    return Leaf(counter.most_common(1)[0])
+
+
+def _get_var(node):
+    return str(node.child) if isinstance(node, UnaryNode) else str(node)
 
 
 def _to_dimacs(node):
-    return "-" + str(node.child)[1:] if isinstance(node, UnaryNode) else str(node)[1:]
+    s = _get_var(node)
+    return "-" + s if isinstance(node, UnaryNode) else s
 
 
 if __name__ == '__main__':
