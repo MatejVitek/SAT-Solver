@@ -31,7 +31,7 @@ def sat(formula, solution_fname=None):
     if isinstance(formula, str):
         formula = _read_cnf(formula)
     openset = [(formula, ())]
-    closedset = set([None])
+    closedset = {None}
     while openset:
         cnf = None
         while openset and cnf in closedset:
