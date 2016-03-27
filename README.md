@@ -8,7 +8,7 @@ The SAT Solver is implemented in Python in the file SAT_solver.py. Included alon
 
 All the problems were successfully solved by this SAT solver in under a minute (though the more difficult ones came close). Note however, that since there can be more than one Hamiltonian cycle in a graph, the solution may differ from those found by other implementations. Indeed, as this particular SAT solver is randomized, the solutions may even differ between consecutive runs of this program.
 
-The sudokus have unique solutions, so the solution found by this SAT solver should be equivalent to any other (up to the perumtation of variables in the valuation).
+The sudokus have unique solutions, so the solution found by this SAT solver should be equivalent to that found by any other (up to the permutation of variables in the valuation).
 
 ## Execution
 
