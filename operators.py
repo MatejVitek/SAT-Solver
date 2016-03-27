@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+import copy
 
 
 class Operator:
@@ -10,33 +11,36 @@ class Operator:
         return self.str_reps[0]
 
     def __eq__(self, other):
-        return self is other
+        if not isinstance(other, Operator):
+            return NotImplemented
+        return str(self) == str(other)
 
     def __ne__(self, other):
-        return self is not other
+        if not isinstance(other, Operator):
+            return NotImplemented
+        return str(self) != str(other)
 
-    def __hash__(self):
-        return hash(str(self))
+    def __copy__(self):
+        return self
+
+    def __deepcopy__(self, memo):
+        return self
 
 
 T = Operator(["⊤", "T"], lambda: T)
 F = Operator(["⊥", "F"], lambda: F)
 vals = T, F
 
-NOT = Operator(["¬", "~", "not", "!"], lambda x: T if x is F else F)
-AND = Operator(["∧", "&", "and"], lambda args: T if all(a is T for a in args) else F)
-OR = Operator(["∨", "|", "or"], lambda args: T if any(a is T for a in args) else F)
-IMPL = Operator(["⇒", "->"], lambda x, y: T if x is F or y is T else F)
+NOT = Operator(["¬", "~", "not", "!"], lambda x: T if x == F else F)
+AND = Operator(["∧", "&", "and"], lambda args: T if all(a == T for a in args) else F)
+OR = Operator(["∨", "|", "or"], lambda args: T if any(a == T for a in args) else F)
+IMPL = Operator(["⇒", "->"], lambda x, y: T if x == F or y == T else F)
 ops = NOT, AND, OR, IMPL
 
 
 class Node(ABC):
     @abstractmethod
     def __eq__(self, other):
-        pass
-
-    @abstractmethod
-    def __hash__(self):
         pass
 
     def __ne__(self, other):
@@ -64,16 +68,16 @@ class Node(ABC):
     def __and__(self, other):
         if not isinstance(other, Node):
             return NotImplemented
-        if isinstance(other, VariadicNode) and other.op is AND:
-            return other + self
-        return VariadicNode(AND, (self, other))
+        if isinstance(other, VariadicNode) and other.op == AND:
+            return self + other
+        return VariadicNode(AND, [self, other])
 
     def __or__(self, other):
         if not isinstance(other, Node):
             return NotImplemented
-        if isinstance(other, VariadicNode) and other.op is OR:
-            return other + self
-        return VariadicNode(OR, (self, other))
+        if isinstance(other, VariadicNode) and other.op == OR:
+            return self + other
+        return VariadicNode(OR, [self, other])
 
     def __neg__(self):
         return ~self
@@ -88,9 +92,6 @@ class Leaf(Node):
             return False
         return self.val == other.val
 
-    def __hash__(self):
-        return hash(self.val)
-
     def __str__(self):
         return str(self.val)
 
@@ -100,26 +101,28 @@ class Leaf(Node):
     def evaluate(self, varvals):
         return self.val if isinstance(self.val, Operator) else varvals[self.val]
 
+    def __copy__(self):
+        return self
+
+    def __deepcopy__(self, memo):
+        return self
+
 
 class UnaryNode(Node):
     def __init__(self, op, child):
         self.op = op
         self.child = child
-        self.hash = hash(self.op) + hash(self.child)
 
     def __eq__(self, other):
         if not isinstance(other, UnaryNode):
             return False
-        return self.op is other.op and self.child == other.child
-
-    def __hash__(self):
-        return self.hash
+        return self.op == other.op and self.child == other.child
 
     def __str__(self):
         return str(self.op) + self.child.bracket_if_necessary()
 
     def __invert__(self):
-        return self.child if self.op is NOT else UnaryNode(NOT, self)
+        return self.child if self.op == NOT else UnaryNode(NOT, self)
 
     def evaluate(self, varvals):
         return self.op.f(self.child.evaluate(varvals))
@@ -130,22 +133,18 @@ class BinaryNode(Node):
         self.op = op
         self.lchild = lchild
         self.rchild = rchild
-        self.hash = hash(self.op) + 3 * hash(self.lchild) + hash(rchild)
 
     def __eq__(self, other):
         if not isinstance(other, BinaryNode):
             return False
-        return self.op is other.op and self.lchild == other.lchild and self.rchild == other.rchild
-
-    def __hash__(self):
-        return self.hash
+        return self.op == other.op and self.lchild == other.lchild and self.rchild == other.rchild
 
     def __str__(self):
         return self.lchild.bracket_if_necessary() + " " + str(self.op) + " " + self.rchild.bracket_if_necessary()
 
     def __invert__(self):
-        if self.op is IMPL:
-            return VariadicNode(AND, (self.lchild, ~self.rchild))
+        if self.op == IMPL:
+            return VariadicNode(AND, [self.lchild, ~self.rchild])
         return None
 
     def bracket_if_necessary(self):
@@ -156,24 +155,21 @@ class BinaryNode(Node):
 
 
 class VariadicNode(Node):
-    def __init__(self, op, children):
+    def __init__(self, op, children=[]):
         self.op = op
         self.children = children
-        self.hash = hash(self.op) + sum(hash(child) for child in self.children)
 
     def __eq__(self, other):
         if not isinstance(other, VariadicNode):
             return False
-        return self.op is other.op and set(self.children) == set(other.children)
-
-    def __hash__(self):
-        return self.hash
+        return (self.op == other.op and len(self) == len(other) and
+                all(self.children.count(child) == other.children.count(child) for child in self))
 
     def __str__(self):
         return (" " + str(self.op) + " ").join(child.bracket_if_necessary() for child in self)
 
     def __invert__(self):
-        return VariadicNode(AND if self.op is OR else OR, tuple(~c for c in self))
+        return VariadicNode(AND if self.op == OR else OR, [~c for c in self])
 
     def bracket_if_necessary(self):
         return "(" + str(self) + ")"
@@ -203,16 +199,41 @@ class VariadicNode(Node):
     def __add__(self, other):
         if not isinstance(other, Node):
             return NotImplemented
-        if isinstance(other, VariadicNode) and self.op is other.op:
-            return VariadicNode(self.op, self.children + other.children)
-        return VariadicNode(self.op, self.children + (other,))
+        if isinstance(other, VariadicNode) and self.op == other.op:
+            return VariadicNode(self.op, copy.copy(self.children) + copy.copy(other.children))
+        return VariadicNode(self.op, self.children + [other])
+
+    def __radd__(self, other):
+        if not isinstance(other, Node):
+            return NotImplemented
+        if isinstance(other, VariadicNode) and self.op == other.op:
+            return VariadicNode(self.op, other.children + self.children)
+        return VariadicNode(self.op, [other] + self.children)
+
+    def __iadd__(self, other):
+        if not isinstance(other, Node):
+            return NotImplemented
+        if isinstance(other, VariadicNode) and self.op == other.op:
+            self.children.extend(other.children)
+            return self
+        return self + other
 
     def __or__(self, other):
-        if self.op is OR:
-            return self + other
+        if self.op == OR:
+            return self.__add__(other)
+        return super().__or__(other)
+
+    def __ior__(self, other):
+        if self.op == OR:
+            return self.__iadd__(other)
         return super().__or__(other)
 
     def __and__(self, other):
-        if self.op is AND:
-            return self + other
+        if self.op == AND:
+            return self.__add__(other)
+        return super().__and__(other)
+
+    def __iand__(self, other):
+        if self.op == AND:
+            return self.__iadd__(other)
         return super().__and__(other)

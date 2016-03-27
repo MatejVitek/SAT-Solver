@@ -5,11 +5,6 @@ import random
 from operators import *
 
 
-#
-# Functionality implementation
-#
-
-
 def main():
     while True:
         in_name = input("Input Dimacs problem file name (leave empty to exit program): ")
@@ -26,22 +21,20 @@ def main():
 
 # DPLL algorithm, as described in lectures
 # Implemented iteratively for easier non-chronological backtracking
-# Assumes formula is either already the CNF form or is the name of the file containing the Dimacs representation of it
+# Assumes formula is either already in CNF or is the name of the file containing the Dimacs representation of it
 def sat(formula, solution_fname=None):
     if isinstance(formula, str):
         formula = _read_cnf(formula)
     openset = [(formula, ())]
-    closedset = {None}
+    cnf = None
     while openset:
-        cnf = None
-        while openset and cnf in closedset:
+        if cnf is None:
             cnf, val = openset.pop(_weighted_choice(openset))
-        closedset.add(cnf)
         while cnf and all(c for c in cnf):
             l = _find_unit_literal(cnf)
             if not l:
                 break
-            cnf = _simplify(cnf, l)
+            _simplify(cnf, l)
             val += l,
 
         if not cnf:
@@ -50,15 +43,16 @@ def sat(formula, solution_fname=None):
                     print(" ".join(_to_dimacs(x) for x in val), file=f)
             return val
 
-        if all(c for c in cnf):
-            p = _get_atom(cnf)
-            cnf_copy = copy.deepcopy(cnf)
+        if any(not c for c in cnf):
+            cnf = None
+            continue
 
-            cnf += VariadicNode(OR, [p])
-            cnf_copy += VariadicNode(OR, [~p])
+        p = _get_atom(cnf)
+        cnf_copy = copy.deepcopy(cnf)
 
-            openset.append((cnf, val))
-            openset.append((cnf_copy, val))
+        cnf += VariadicNode(OR, [~p])
+        cnf_copy += VariadicNode(OR, [p])
+        openset.append((cnf_copy, val))
 
     if solution_fname:
         with open(solution_fname, 'w') as f:
@@ -67,12 +61,12 @@ def sat(formula, solution_fname=None):
 
 # Reads the input file in dimacs format and returns the expression tree of the formula in CNF
 def _read_cnf(fname):
-    clauses = []
+    cnf = VariadicNode(AND)
     with open(fname, 'r') as f:
         for line in f:
             if line[0] not in ('c', 'p'):
-                clauses.append(VariadicNode(OR, tuple(_get_literal_node(l) for l in line.split() if int(l))))
-    return VariadicNode(AND, tuple(clauses))
+                cnf += VariadicNode(OR, [_get_literal_node(l) for l in line.split() if int(l)])
+    return cnf
 
 
 # Returns the leaf xn for n in input, and not(xn) for -n in input
@@ -103,27 +97,25 @@ def _find_unit_literal(cnf):
 
 # Simplify procedure as described in lectures
 def _simplify(cnf, l):
-    for c in cnf:
-        print("b", l, ~l, type(l), "B", c, type(c), l in c)
-    return VariadicNode(AND, tuple(_filter(c, ~l) for c in cnf if l not in c))
+    cnf.children = [_filter(c, ~l) for c in cnf if l not in c]
 
 
 # Removes the chosen unit literal (negated above) from clause c
 def _filter(c, l):
-    for x in c:
-        print("a", l, type(l), "A", x, type(x), x==l)
-    return VariadicNode(c.op, tuple(x for x in c if x != l))
+    c.children = [x for x in c if x != l]
+    return c
 
 
 # Returns the best atom from the formula by below heuristic
-# h(a) = sum(1/clause_length) over all clauses a appears in
+# h(a) = sum(1/clause_length ^ 2) over all clauses a appears in + sum(1/clause_length) over all clauses ~a appears in
 # Atoms that appear in many clauses will be rated highly
 # Atoms that appear in short clauses will be rated highly
+# Atoms that appear negated often will be rated highly (since negation is branched first in DPLL above)
 def _get_atom(cnf):
     h = collections.defaultdict(float)
     for c in cnf:
         for l in c:
-            h[_get_var(l)] += 1.0 / len(c)
+            h[_get_var(l)] += 1.0 / len(c) if isinstance(l, UnaryNode) else 1.0 / len(c) ** 2
     return Leaf(sorted(h.items(), key=lambda x: x[1], reverse=True)[0][0])
 
 
