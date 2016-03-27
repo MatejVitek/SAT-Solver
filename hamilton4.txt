@@ -1,4 +1,4 @@
-c Reduction of Hamiltonian cycle problem on complete_graph(20) to SAT in CNF form.
+c Reduction of Hamiltonian cycle problem SAT in CNF form.
 c The vertices are denoted as numbers v (1 <= v <= 20).
 c Atom x_iv (0 <= i <= 20) implies vertex v is in i-th position on the cycle.
 c Atom x_iv is represented as 20 * i + v.
