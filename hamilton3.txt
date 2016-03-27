@@ -1,4 +1,4 @@
-c Reduction of Hamiltonian cycle problem SAT in CNF form.
+c Reduction of Hamiltonian cycle problem CNF-SAT.
 c The vertices are denoted as numbers v (1 <= v <= 15).
 c Atom x_iv (0 <= i <= 15) implies vertex v is in i-th position on the cycle.
 c Atom x_iv is represented as 15 * i + v.
